@@ -279,7 +279,7 @@ const updateUserCoverImage = asyncHandler(async(req, res) => {
     )
 })
 
-const getUserChannerProfile = asyncHandler(async(req,res)=>{
+const getUserChannelProfile = asyncHandler(async(req,res)=>{
     const {username} = req.params
 
     if(!username?.trim()){
@@ -401,4 +401,4 @@ const getWatchHistory = asyncHandler(async(req,res)=>{
 
 })
 
-export {registerUser, loginUser, logoutUser, refreshAccessToken, changeCurrentPassword, updateUserCoverImage, updateUserAvatar, updateAccountDetails, getCurrentUser, getUserChannerProfile, getWatchHistory}
+export {registerUser, loginUser, logoutUser, refreshAccessToken, changeCurrentPassword, updateUserCoverImage, updateUserAvatar, updateAccountDetails, getCurrentUser, getUserChannelProfile, getWatchHistory}
