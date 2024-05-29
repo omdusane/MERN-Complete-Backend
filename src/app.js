@@ -19,4 +19,10 @@ import userRouter from './routes/user.routes.js'
 
 app.use('/api/v1/users', userRouter)
 
+//Registering error handling middleware
+app.use((err, req, res, next) => {
+    console.error(err.stack);
+    res.status(err.statusCode || 500).json({ success: false, message: err.message || 'Error From Server' });
+});
+
 export default app;
