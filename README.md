@@ -1,4 +1,4 @@
-# React Appwrite Blog
+# MeTube
 This project was created while learning backend development from the Chai aur Code series. I've implemented additional features to complete and enhance the project, transforming it into a complete backend for comprehensive video hosting platform. 
 
 ## API Documentation
