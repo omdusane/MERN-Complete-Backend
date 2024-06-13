@@ -7,84 +7,173 @@ import {Like} from "../models/like.model.js"
 import {ApiError} from "../utils/ApiError.js"
 import {ApiResponse} from "../utils/ApiResponse.js"
 import {asyncHandler} from "../utils/asyncHandler.js"
-import {uploadOnCloudinary} from "../utils/cloudinary.js"
-
+import {uploadOnCloudinary, deleteOnCloudinary} from "../utils/cloudinary.js"
 
 const getAllVideos = asyncHandler(async (req, res) => {
-    const { page = 1, limit = 10, query, sortBy, sortType, userId } = req.query
-
-    const matchCondition = {}
-
-    if(query){
-        matchCondition.$or = [
+    
+    const { page = 1, limit = 10, query = "", sortBy = "createdAt", sortType = 1,userId } = req.query;
+ 
+    const matchCondition = {
+        $or: [
             { title: { $regex: query, $options: "i" } },
             { description: { $regex: query, $options: "i" } }
         ]
+    };
+
+    if (userId) {
+        matchCondition.owner = new mongoose.Types.ObjectId(userId);
+    }
+    let videoAggregate;
+    try {
+        videoAggregate = Video.aggregate(
+            [
+                {
+                    $match: matchCondition
+
+                },
+
+                {
+                    $lookup: {
+                        from: "users",
+                        localField: "owner",
+                        foreignField: "_id",
+                        as: "owner",
+                        pipeline: [
+                            {
+                                $project: {
+                                    _id :1,
+                                    fullName: 1,
+                                    avatar: "$avatar.url",
+                                    username: 1,
+                                }
+                            },
+
+                        ]
+                    }
+
+                },
+
+                {
+                    $addFields: {
+                        owner: {
+                            $first: "$owner",
+                        },
+                    },
+                },
+
+                {
+                    $sort: {
+                        [sortBy || "createdAt"]: sortType || 1
+                    }
+                },
+
+            ]
+        )
+    } catch (error) {
+        console.error("Error in aggregation:", error);
+        throw new ApiError(500, error.message || "Internal server error in video aggregation");
     }
 
-    if(userId){
-        matchCondition.owner = userId
-    }
+    const options = {
+        page,
+        limit,
+        customLabels: {
+            totalDocs: "totalVideos",
+            docs: "videos",
 
-    const sortOptions = {};
-    if(sortType && sortBy){
-        sortOptions[sortBy] = sortType === "desc" ? -1 : 1;
-    }
-
-    const videos = await Video.aggregatePaginate(matchCondition, {
-        page: parseInt(page),
+        },
+        skip: (page - 1) * limit,
         limit: parseInt(limit),
-        sort: sortOptions
-    });
+    }
 
-    return res.status(200).json(
-        new ApiResponse(200, videos, "Videos retrived successfully")
-    )
+    Video.aggregatePaginate(videoAggregate, options)
+        .then(result => {
+            // console.log("first")
+            if (result?.videos?.length === 0 && userId) {
+                return res.status(200).json(new ApiResponse(200, [], "No videos found"))
+            }
+
+            return res.status(200)
+                .json(
+                    new ApiResponse(
+                        200,
+                        result,
+                        "video fetched successfully"
+                    )
+                )
+        }).catch(error => {
+            console.log("error ::", error)
+            throw new ApiError(500, error?.message || "Internal server error in video aggregate Paginate")
+        })
+
+
+
+
 })
 
 const publishAVideo = asyncHandler(async (req, res) => {
-    const { title, description} = req.body
 
-    try {
-        if(!(title && description) || !(title?.trim() && description?.trim())) throw new ApiError(404, "Please provide title and description")
-        if(!req.files?.videoFile?.[0]?.path && !req.files?.thumbnail?.[0].path) throw new ApiError(404, "Please provide video and thumbnail file")    
-        
-        const videoFile = await uploadOnCloudinary(req.files?.videoFile?.[0]?.path)
-        const thumbnail = await uploadOnCloudinary(req.files?.thumbnail?.[0].path)
+    const { title, description } = req.body;
+    var videoFile;
+    var thumbnail;
+  try {
+      if(!(title && description) || !(title?.trim() && description?.trim())) throw new ApiError(404, "Please provide title and description");
 
-        const newVideo = await Video.create({
-            videoFile : videoFile.url,
-            thumbnail : thumbnail.url,
-            title,
-            description,
-            duration: videoFile.duration,
-            owner: req.user?._id,
-        });
-        
-        return res.status(201).json(
-            new ApiResponse(201, newVideo, 'Video Published Successfully')
-        )
+      if (!req.files?.videoFile?.[0]?.path && !req.files?.thumbnail?.[0]?.path) throw new ApiError(404, "Please provide video and thumbnail");
 
-    } catch (error) {
-        console.error("Error While Publishing the video ",error);
-        return res.status(500).json(
-            new ApiResponse(500, "Internal Server Error")
-        )
-    }
+
+       [videoFile, thumbnail] = await Promise.all(
+          [
+          uploadOnCloudinary(req.files?.videoFile?.[0]?.path),
+          uploadOnCloudinary(req.files?.thumbnail?.[0]?.path)
+          ]
+      );
+
+      const video = await Video.create({
+          title,
+          description,
+          videoFile: { publicId: videoFile?.public_id, url: videoFile?.url },
+          thumbnail: { publicId: thumbnail?.public_id, url: thumbnail?.url },
+          owner: req.user?._id,
+          duration: videoFile?.duration
+      })
+
+      return res.status(201)
+          .json(new ApiResponse(201,
+              {
+                  ...video._doc,
+                  videoFile: videoFile?.url, // Only send the URL of the video file
+                  thumbnail: thumbnail?.url    // Only send the URL of the thumbnail
+              },
+              "Video Published Successfully"
+          ))
+  } catch (error) {
+      try {
+        if(videoFile?.url) await deleteOnCloudinary(videoFile?.url, videoFile?.public_id);
+        if (thumbnail?.url) await deleteOnCloudinary(thumbnail?.url, thumbnail?.public_id);
+
+      } catch (error) {
+          console.error("Error while deleting video :: ", error);
+          throw new ApiError(500, error?.message || 'Server Error while deleting video from cloudinary');
+      }
+      console.error("Error while publishing video :: ", error);
+      throw new ApiError(500, error?.message || 'Server Error while uploading video');
+
+  }
 
 })
 
 const getVideoById = asyncHandler(async (req, res) => {
     const { videoId } = req.params
-    
+    console.log(videoId);
     try {
 
         if(!isValidObjectId(videoId)){
             return res.status(400).json({ error: "Invalid video id" })
         }
 
-        const video = await Video.findById({videoId})
-
+        const video = await Video.findById(videoId)
+        
         if(!video){
             throw new ApiError(404, "Video not Found")
         }
@@ -101,7 +190,7 @@ const getVideoById = asyncHandler(async (req, res) => {
 const updateVideo = asyncHandler(async (req, res) => {
     const { videoId } = req.params
     const { title, description } = req.body
-    const thumbnailLocalPath = req.files?.path
+    const thumbnailLocalPath = req.file?.path
 
     if(!isValidObjectId(videoId)) throw new ApiError(400, "Invalid Video Id")
 
@@ -115,7 +204,7 @@ const updateVideo = asyncHandler(async (req, res) => {
         throw new ApiError(400, "update fields are required")
     }
     
-    if (video.owner.toString() !== req.user?._id) {
+    if (video.owner.toString() !== req.user?._id.toString()) {
         return res.status(403).json(
             new ApiResponse(403, "Unauthorized: You are not the owner of this video!")
         );
@@ -124,8 +213,8 @@ const updateVideo = asyncHandler(async (req, res) => {
     const updatedThumbnail  = await uploadOnCloudinary(thumbnailLocalPath)
     if(!updatedThumbnail) throw new ApiError(500, "Error", error)
 
-    const oldthumbnailurl = video.thumbnail;
-    if(!oldthumbnailurl) throw new ApiError(404, "Old thumbnail url not found")
+    const {publicId, url} = video?.thumbnail;
+    if (!(publicId || url)) throw new ApiError(500, "old thumbnail url or publicId not found");
 
     const updatedVideo = await Video.findByIdAndUpdate(
         videoId,
@@ -133,7 +222,10 @@ const updateVideo = asyncHandler(async (req, res) => {
             $set:{
                 title,
                 description,
-                thumbnail: updatedThumbnail.url
+                thumbnail: {
+                    publicId: updatedThumbnail?.public_id,
+                    url: updatedThumbnail?.url
+                }
             }
         },
         {
@@ -142,19 +234,20 @@ const updateVideo = asyncHandler(async (req, res) => {
     )
 
     if(!updatedVideo){
-        await deleteOnCloudinary(updatedThumbnail.url)
+        await deleteOnCloudinary(updatedThumbnail.url,  updatedThumbnail?.public_id)
         console.error("Error while updating video");
         throw new ApiError(500, "Error While Updating the Video")
     }
 
-    if(oldthumbnailurl){
+    if(url){
         try {
-            await deleteOnCloudinary(oldthumbnailurl)
+            await deleteOnCloudinary(url, publicId)
         } catch (error) {
             console.error("Error while deleting old thumbnail from the cloudinary", error);
             throw  new ApiError(500, error?.message || "Internal Server Error")
         }
     }
+
 
     return res.status(200).json(
         new ApiResponse(200, updatedVideo, "Video Updated Successfully")
@@ -172,12 +265,9 @@ const deleteVideo = asyncHandler(async (req, res) => {
         if(!video){
             throw new ApiError(404, "No Video Found")
         }
-    
-        [deleteVideoFilePromise, deleteThumbnailPromise] = await Promise.all([
-            await deleteOnCloudinary(video.videoFile),
-            await deleteOnCloudinary(video.thumbnail)
-        ])
-    
+        
+        const deleteVideoFilePromise = await deleteOnCloudinary(video.videoFile.url, video.videoFile.publicId)
+        const deleteThumbnailPromise = await deleteOnCloudinary(video.thumbnail.url, video.thumbnail.publicId)
         await Video.findByIdAndDelete(videoId)
     
         const updataPromises = [
@@ -193,14 +283,14 @@ const deleteVideo = asyncHandler(async (req, res) => {
             new ApiResponse(201,{}, "Video Deleted Successfully")
         )
     } catch (error) {
-        console.error("Error while deleting the video, Retrying... ", error);
+        console.error("Error while deleting the video", error);
 
-        try {
-            if(deleteVideoFilePromise?.error) await deleteVideoFilePromise.retry()
-            if(deleteThumbnailPromise?.error) await deleteThumbnailPromise.retry()
-        } catch (cloudinaryError) {
-            console.error('Error while deleting the video',cloudinaryError)
-        }
+        // try {
+        //     if(deleteVideoFilePromise?.error) await deleteVideoFilePromise.retry()
+        //     if(deleteThumbnailPromise?.error) await deleteThumbnailPromise.retry()
+        // } catch (cloudinaryError) {
+        //     console.error('Error while deleting the video',cloudinaryError)
+        // }
 
         throw new ApiError(500, error?.message || "Internal Server Error while deleting the video")
     }
