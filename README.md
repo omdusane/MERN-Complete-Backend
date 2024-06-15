@@ -12,8 +12,9 @@ This project was created while learning backend development from the Chai aur Co
 ## Features
 - User Authentication: Register, log in, and log out functionalities with JWT.
 - Subscriptions: Subscribe and unsubscribe from channels
-- User Interactions: Like, dislike, comment to videos.
 - Video Management: Upload, edit, and delete videos.
+- User Interactions: Like, dislike to comments, videos and tweets.
+- Tweet Management: Upload, edit, and delete tweets.
 - Secure Authentication: Using JWT Access Tokens and Refresh Tokens
 
 ## Project Structure
